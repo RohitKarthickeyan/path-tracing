@@ -23,6 +23,11 @@ struct SceneView {
   Vec3 sky;
 };
 
+struct Settings {
+  float exposure = 1;
+  bool tonemap_aces = true;
+};
+
 struct Scene {
   std::vector<Sphere> spheres;
   std::vector<Plane> planes;

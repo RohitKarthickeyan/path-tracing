@@ -4,7 +4,6 @@
 #include "sampling.h"
 
 constexpr int MAX_BOUNCES = 8;
-constexpr float GAMMA = 2.2f;
 
 __global__ void path_kernel(float4* accum, SceneView s, Camera cam, int w, int h, uint32_t frame) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -46,14 +45,13 @@ __global__ void path_kernel(float4* accum, SceneView s, Camera cam, int w, int h
   accum[i].z += color.z;
 }
 
-__device__ uint8_t encode(float sum, int spp) { return uint8_t(fminf(powf(sum / spp, 1 / GAMMA), 1.0f) * 255 + 0.5f); }
-
-__global__ void resolve_kernel(const float4* accum, uchar4* out, int w, int h, int spp) {
+__global__ void resolve_kernel(const float4* accum, uchar4* out, int w, int h, int spp, Settings st) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
   if (x >= w || y >= h) return;
   float4 a = accum[y * w + x];
-  out[y * w + x] = make_uchar4(encode(a.x, spp), encode(a.y, spp), encode(a.z, spp), 255);
+  float e = st.exposure / spp;
+  out[y * w + x] = make_uchar4(encode(a.x, e, st.tonemap_aces), encode(a.y, e, st.tonemap_aces), encode(a.z, e, st.tonemap_aces), 255);
 }
 
 template <class T> static T* upload(const std::vector<T>& v) {
@@ -79,12 +77,12 @@ static float4* accumulate(const Scene& scene, int w, int h, int spp) {
   return accum;
 }
 
-std::vector<uint8_t> render_scene(const Scene& scene, int w, int h, int spp) {
+std::vector<uint8_t> render_scene(const Scene& scene, const Settings& settings, int w, int h, int spp) {
   float4* accum = accumulate(scene, w, h, spp);
   uchar4* out = nullptr;
   cudaMalloc(&out, size_t(w) * h * sizeof(uchar4));
   dim3 block(16, 16), grid((w + 15) / 16, (h + 15) / 16);
-  resolve_kernel<<<grid, block>>>(accum, out, w, h, spp);
+  resolve_kernel<<<grid, block>>>(accum, out, w, h, spp, settings);
   std::vector<uint8_t> px(size_t(w) * h * 4);
   cudaMemcpy(px.data(), out, px.size(), cudaMemcpyDeviceToHost);
   cudaFree(accum);

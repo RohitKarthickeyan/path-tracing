@@ -24,6 +24,19 @@ HD inline bool refract(Vec3 d, Vec3 n, float eta, Vec3& out) {
   return true;
 }
 
+constexpr float GAMMA = 2.2f;
+
+// Narkowicz 2015 ACES fit
+HD inline float aces(float x) {
+  return fminf(fmaxf(x * (2.51f * x + 0.03f) / (x * (2.43f * x + 0.59f) + 0.14f), 0.0f), 1.0f);
+}
+
+HD inline uint8_t encode(float linear, float exposure, bool tonemap_aces) {
+  float x = linear * exposure;
+  x = tonemap_aces ? aces(x) : fminf(x, 1.0f);
+  return uint8_t(powf(fmaxf(x, 0.0f), 1 / GAMMA) * 255 + 0.5f);
+}
+
 HD inline float schlick(float cos_i, float eta) {
   float r0 = (1 - eta) / (1 + eta);
   r0 *= r0;
