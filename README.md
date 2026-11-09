@@ -107,12 +107,26 @@ The window opens at 1600x900 and is resizable (larger windows render more pixels
 - `bunny`: glass and gold Stanford bunnies (139k triangles) on a checkerboard under an HDRI sky.
 - `sphere`: a single sphere on a plane.
 
-## How it works
+## Pipeline
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the pipeline, the source layout and the key algorithms.
+Every displayed frame runs this chain on the GPU. Color stays in linear floating point until the final stage.
 
-## Credits
+```
+scene (spheres, planes, BVH triangles, materials, HDRI + its CDFs)
+  │
+  ▼
+path_kernel ×N   one thread per pixel, one sample per launch
+  │              accum += color (and luminance² in .w), AOVs += normal/depth, albedo
+  ▼
+mean_kernel      accum / spp, plus each pixel's noise std in .w
+  ▼
+denoise          5 à-trous passes, taps spaced 1, 2, 4, 8, 16 px (ping-pong buffers)
+  ▼
+bloom            bright pass → horizontal Gaussian → vertical Gaussian
+  ▼
+resolve_kernel   + bloom × strength → exposure → ACES → gamma 2.2 → RGBA8
+  ▼
+OpenGL pixel buffer (viewer, mapped into CUDA, no CPU copy)  or  PNG (CLI)
+```
 
-- Stanford bunny: [Stanford 3D Scanning Repository](https://graphics.stanford.edu/data/3Dscanrep/), via [common-3d-test-models](https://github.com/alecjacobson/common-3d-test-models).
-- HDRIs (CC0): [Poly Haven](https://polyhaven.com/), "Kloofendal 48d Partly Cloudy (Pure Sky)" and "Studio Small 09".
-- Libraries: [GLFW](https://www.glfw.org/), [Dear ImGui](https://github.com/ocornut/imgui), and [stb_image / stb_image_write](https://github.com/nothings/stb).
+Accumulation restarts whenever the camera, the scene or a sampling setting changes. The denoiser, bloom and tonemapping run on the accumulated mean every frame, so toggling them is instant.
