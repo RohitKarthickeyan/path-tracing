@@ -1,0 +1,9 @@
+build/
+tests/
+CLAUDE.md
+AGENTS.md
+**/CONTEXT.md
+PROGRESS.md
+.claude/
+PRD CUDA Path Tracer (Level 1).md
+path-tracer-spec.md
