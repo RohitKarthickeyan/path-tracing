@@ -35,12 +35,23 @@ static bool fly(GLFWwindow* win, Camera& cam, float dt, double& last_x, double& 
   return moved;
 }
 
+static void on_key(GLFWwindow* win, int key, int, int action, int) {
+  if (action != GLFW_PRESS) return;
+  Settings& st = *(Settings*)glfwGetWindowUserPointer(win);
+  if (key >= GLFW_KEY_1 && key <= GLFW_KEY_4) st.view = ViewMode(key - GLFW_KEY_1);
+  if (key == GLFW_KEY_N) st.denoise = !st.denoise;
+  if (key == GLFW_KEY_B) st.bloom = !st.bloom;
+  if (key == GLFW_KEY_ESCAPE) glfwSetWindowShouldClose(win, GLFW_TRUE);
+}
+
 void run_viewer(const Scene& scene, Settings settings, int w, int h) {
   glfwInit();
   glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
   GLFWwindow* win = glfwCreateWindow(w, h, "pt", nullptr, nullptr);
   glfwMakeContextCurrent(win);
   glfwSwapInterval(0);
+  glfwSetWindowUserPointer(win, &settings);
+  glfwSetKeyCallback(win, on_key);
   auto gen_buffers = (GenBuffers)glfwGetProcAddress("glGenBuffers");
   auto bind_buffer = (BindBuffer)glfwGetProcAddress("glBindBuffer");
   auto buffer_data = (BufferData)glfwGetProcAddress("glBufferData");
@@ -59,14 +70,11 @@ void run_viewer(const Scene& scene, Settings settings, int w, int h) {
   double last_x = 0, last_y = 0, last_t = glfwGetTime(), title_t = last_t;
   glfwGetCursorPos(win, &last_x, &last_y);
   int frames = 0;
-  const int view_keys[] = {GLFW_KEY_1, GLFW_KEY_2, GLFW_KEY_3, GLFW_KEY_4};
-  while (!glfwWindowShouldClose(win) && glfwGetKey(win, GLFW_KEY_ESCAPE) != GLFW_PRESS) {
+  while (!glfwWindowShouldClose(win)) {
     glfwPollEvents();
     double t = glfwGetTime();
     if (fly(win, cam, float(t - last_t), last_x, last_y)) reset_accumulation(r);
     last_t = t;
-    for (int v = 0; v < 4; v++)
-      if (glfwGetKey(win, view_keys[v]) == GLFW_PRESS) settings.view = ViewMode(v);
 
     accumulate(r, cam, settings, 1);
     void* px;
@@ -80,8 +88,9 @@ void run_viewer(const Scene& scene, Settings settings, int w, int h) {
 
     frames++;
     if (t - title_t > 0.5) {
-      char title[64];
-      std::snprintf(title, sizeof(title), "pt | %.0f fps | %d spp", frames / (t - title_t), accumulated_spp(r));
+      char title[96];
+      std::snprintf(title, sizeof(title), "pt | %.0f fps | %d spp | denoise %s | bloom %s", frames / (t - title_t), accumulated_spp(r),
+                    settings.denoise ? "on" : "off", settings.bloom ? "on" : "off");
       glfwSetWindowTitle(win, title);
       frames = 0;
       title_t = t;

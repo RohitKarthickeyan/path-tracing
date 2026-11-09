@@ -1,4 +1,5 @@
 #pragma once
+#include <vector>
 #include "hd.h"
 
 HD inline Vec3 random_unit_vector(Rng& rng) {
@@ -37,15 +38,84 @@ HD inline uint8_t encode(float linear, float exposure, bool tonemap_aces) {
   return uint8_t(powf(fmaxf(x, 0.0f), 1 / GAMMA) * 255 + 0.5f);
 }
 
-HD inline Vec3 env_lookup(const float* env, int w, int h, Vec3 d, float rotation) {
-  float c = cosf(rotation), s = sinf(rotation);
-  Vec3 r{c * d.x + s * d.z, d.y, -s * d.x + c * d.z};
-  float u = 0.5f + atan2f(r.x, -r.z) / (2 * PI), v = acosf(fminf(fmaxf(r.y, -1.0f), 1.0f)) / PI;
+HD inline Vec3 rotate_y(Vec3 d, float a) {
+  float c = cosf(a), s = sinf(a);
+  return {c * d.x + s * d.z, d.y, -s * d.x + c * d.z};
+}
+
+HD inline void env_uv(Vec3 d, float rotation, float& u, float& v) {
+  Vec3 r = rotate_y(d, rotation);
+  u = 0.5f + atan2f(r.x, -r.z) / (2 * PI);
+  v = acosf(fminf(fmaxf(r.y, -1.0f), 1.0f)) / PI;
+}
+
+HD inline int env_index(float u, float v, int w, int h) {
   int x = int(u * w), y = int(v * h);
-  x = x < w ? x : w - 1;
-  y = y < h ? y : h - 1;
-  const float* p = env + 3 * (y * w + x);
+  return (y < h ? y : h - 1) * w + (x < w ? x : w - 1);
+}
+
+HD inline Vec3 env_lookup(const float* env, int w, int h, Vec3 d, float rotation) {
+  float u, v;
+  env_uv(d, rotation, u, v);
+  const float* p = env + 3 * env_index(u, v, w, h);
   return {p[0], p[1], p[2]};
+}
+
+// CDFs over env pixels weighted by luminance * sin(theta); marginal over rows, conditional per row
+inline void build_env_cdf(const float* env, int w, int h, std::vector<float>& marginal, std::vector<float>& conditional) {
+  marginal.assign(h, 0);
+  conditional.assign(size_t(w) * h, 0);
+  float total = 0;
+  for (int y = 0; y < h; y++) {
+    float s = sinf(PI * (y + 0.5f) / h), row = 0;
+    float* c = &conditional[size_t(y) * w];
+    for (int x = 0; x < w; x++) {
+      const float* p = env + 3 * (size_t(y) * w + x);
+      row += luminance({p[0], p[1], p[2]}) * s;
+      c[x] = row;
+    }
+    for (int x = 0; x < w; x++) c[x] = row > 0 ? c[x] / row : float(x + 1) / w;
+    total += row;
+    marginal[y] = total;
+  }
+  if (total <= 0) marginal.clear();
+  for (float& m : marginal) m /= total;
+}
+
+struct EnvDist { const float* marginal; const float* conditional; int w, h; };
+
+HD inline int find_cdf(const float* cdf, int n, float u) {
+  int lo = 0, hi = n - 1;
+  while (lo < hi) {
+    int mid = (lo + hi) / 2;
+    if (cdf[mid] > u) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
+
+HD inline float cdf_step(const float* cdf, int i) { return cdf[i] - (i > 0 ? cdf[i - 1] : 0); }
+
+// solid-angle pdf = pixel pdf * w * h / (2 pi^2 sin(theta))
+HD inline float env_pixel_pdf(const EnvDist& e, int x, int y, float sin_theta) {
+  if (sin_theta <= 0) return 0;
+  return cdf_step(e.marginal, y) * cdf_step(e.conditional + y * e.w, x) * e.w * e.h / (2 * PI * PI * sin_theta);
+}
+
+HD inline float env_pdf(const EnvDist& e, Vec3 d, float rotation) {
+  float u, v;
+  env_uv(d, rotation, u, v);
+  int i = env_index(u, v, e.w, e.h);
+  return env_pixel_pdf(e, i % e.w, i / e.w, sinf(v * PI));
+}
+
+HD inline Vec3 env_sample(const EnvDist& e, float rotation, Rng& rng, float& pdf) {
+  int y = find_cdf(e.marginal, e.h, rng.next_float());
+  int x = find_cdf(e.conditional + y * e.w, e.w, rng.next_float());
+  float theta = (y + rng.next_float()) / e.h * PI, phi = ((x + rng.next_float()) / e.w - 0.5f) * 2 * PI;
+  float st = sinf(theta);
+  pdf = env_pixel_pdf(e, x, y, st);
+  return rotate_y({st * sinf(phi), cosf(theta), -st * cosf(phi)}, -rotation);
 }
 
 HD inline float schlick(float cos_i, float eta) {

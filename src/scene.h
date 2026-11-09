@@ -28,6 +28,8 @@ struct SceneView {
   const BvhNode* nodes;
   const float* env;  // RGB equirect, null = constant sky
   int env_w, env_h;
+  const float* env_marginal;  // null = no env importance sampling
+  const float* env_conditional;
 };
 
 enum ViewMode : uint8_t { VIEW_COLOR, VIEW_NORMAL, VIEW_ALBEDO, VIEW_DEPTH };
@@ -37,6 +39,12 @@ struct Settings {
   bool tonemap_aces = true;
   ViewMode view = VIEW_COLOR;
   float env_intensity = 1, env_rotation = 0;  // rotation: radians about +Y
+  bool denoise = true;
+  int denoise_iters = 5;
+  float sigma_n = 128, sigma_a = 0.1f, sigma_z = 0.1f, sigma_c = 1;
+  bool bloom = true;
+  float bloom_threshold = 1, bloom_knee = 0.5f, bloom_strength = 0.05f;
+  int bloom_radius = 16;  // pixels
 };
 
 struct Scene {

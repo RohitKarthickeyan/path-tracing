@@ -1,4 +1,5 @@
 #include <cuda_runtime.h>
+#include "filters.h"
 #include "intersect.h"
 #include "render.h"
 #include "sampling.h"
@@ -13,10 +14,12 @@ struct Renderer {
   Triangle* tris;
   BvhNode* nodes;
   float* env;
+  float *env_marginal, *env_conditional;
   SceneView view;
   float4* accum;
   float4* normal_depth;
   float4* albedo;
+  float4 *ping, *pong, *glow, *glow_tmp;
   int w, h, spp;
 };
 
@@ -45,10 +48,13 @@ __global__ void path_kernel(Renderer r, Camera cam, Settings st, uint32_t frame)
   Vec3 color{0, 0, 0}, throughput{1, 1, 1};
   Vec3 aov_n{0, 0, 0}, aov_a = saturate(sky_radiance(s, st, ray.d));
   float aov_d = MISS_DEPTH;
+  EnvDist ed{s.env_marginal, s.env_conditional, s.env_w, s.env_h};
+  float bsdf_pdf = 0;  // cosine pdf of the last diffuse bounce; 0 after camera or specular
   for (int b = 0; b < MAX_BOUNCES; b++) {
     Hit hit;
     if (!hit_scene(s, ray, hit)) {
-      color = color + throughput * sky_radiance(s, st, ray.d);
+      float mis = ed.marginal && bsdf_pdf > 0 ? bsdf_pdf / (bsdf_pdf + env_pdf(ed, ray.d, st.env_rotation)) : 1;
+      color = color + throughput * sky_radiance(s, st, ray.d) * mis;
       break;
     }
     Material m = s.mats[hit.mat];
@@ -62,8 +68,18 @@ __global__ void path_kernel(Renderer r, Camera cam, Settings st, uint32_t frame)
       break;
     }
     Vec3 dir;
+    bsdf_pdf = 0;
     if (m.type == DIFFUSE) {
+      if (ed.marginal) {
+        float light_pdf;
+        Vec3 l = env_sample(ed, st.env_rotation, rng, light_pdf);
+        float c = dot(l, hit.n);
+        Hit blocker;
+        if (c > 0 && light_pdf > 0 && !hit_scene(s, {hit.p + hit.n * T_MIN, l}, blocker))
+          color = color + throughput * m.albedo * sky_radiance(s, st, l) * (c / PI / (light_pdf + c / PI));
+      }
       dir = cosine_direction(hit.n, rng);
+      bsdf_pdf = dot(dir, hit.n) / PI;
     } else if (m.type == METAL) {
       dir = normalize(reflect(ray.d, hit.n) + m.fuzz * random_unit_vector(rng));
       if (dot(dir, hit.n) <= 0) break;
@@ -87,7 +103,15 @@ __global__ void path_kernel(Renderer r, Camera cam, Settings st, uint32_t frame)
 
 __device__ uint8_t unit_byte(float x) { return uint8_t(fminf(fmaxf(x, 0.0f), 1.0f) * 255 + 0.5f); }
 
-__global__ void resolve_kernel(Renderer r, Settings st, uchar4* out) {
+__global__ void mean_kernel(const float4* accum, float4* out, int w, int h, float inv) {
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+  if (x >= w || y >= h) return;
+  float4 a = accum[y * w + x];
+  out[y * w + x] = make_float4(a.x * inv, a.y * inv, a.z * inv, 0);
+}
+
+__global__ void resolve_kernel(Renderer r, Settings st, const float4* color, const float4* glow, uchar4* out) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
   if (x >= r.w || y >= r.h) return;
@@ -103,9 +127,10 @@ __global__ void resolve_kernel(Renderer r, Settings st, uchar4* out) {
     uint8_t d = unit_byte(1 / (1 + 0.1f * r.normal_depth[i].w * inv));
     out[i] = make_uchar4(d, d, d, 255);
   } else {
-    float4 a = r.accum[i];
-    float e = st.exposure * inv;
-    out[i] = make_uchar4(encode(a.x, e, st.tonemap_aces), encode(a.y, e, st.tonemap_aces), encode(a.z, e, st.tonemap_aces), 255);
+    float4 c = color[i];
+    if (glow) c = make_float4(c.x + st.bloom_strength * glow[i].x, c.y + st.bloom_strength * glow[i].y, c.z + st.bloom_strength * glow[i].z, 0);
+    float e = st.exposure;
+    out[i] = make_uchar4(encode(c.x, e, st.tonemap_aces), encode(c.y, e, st.tonemap_aces), encode(c.z, e, st.tonemap_aces), 255);
   }
 }
 
@@ -126,21 +151,27 @@ Renderer* create_renderer(const Scene& scene, int w, int h) {
   r->tris = upload(scene.tris);
   r->nodes = upload(scene.bvh);
   r->env = scene.env.empty() ? nullptr : upload(scene.env);
+  std::vector<float> marginal, conditional;
+  if (r->env) build_env_cdf(scene.env.data(), scene.env_w, scene.env_h, marginal, conditional);
+  r->env_marginal = marginal.empty() ? nullptr : upload(marginal);
+  r->env_conditional = marginal.empty() ? nullptr : upload(conditional);
   r->view = {r->spheres, int(scene.spheres.size()), r->planes, int(scene.planes.size()), r->mats, scene.sky,
-             r->tris, int(scene.tris.size()), r->nodes, r->env, scene.env_w, scene.env_h};
+             r->tris, int(scene.tris.size()), r->nodes, r->env, scene.env_w, scene.env_h, r->env_marginal, r->env_conditional};
   r->w = w;
   r->h = h;
   size_t bytes = size_t(w) * h * sizeof(float4);
   cudaMalloc(&r->accum, bytes);
   cudaMalloc(&r->normal_depth, bytes);
   cudaMalloc(&r->albedo, bytes);
+  for (float4** p : {&r->ping, &r->pong, &r->glow, &r->glow_tmp}) cudaMalloc(p, bytes);
   reset_accumulation(r);
   return r;
 }
 
 void destroy_renderer(Renderer* r) {
-  for (void* p : {(void*)r->spheres, (void*)r->planes, (void*)r->mats, (void*)r->tris, (void*)r->nodes, (void*)r->env,
-                  (void*)r->accum, (void*)r->normal_depth, (void*)r->albedo})
+  for (void* p : {(void*)r->spheres, (void*)r->planes, (void*)r->mats, (void*)r->tris, (void*)r->nodes, (void*)r->env, (void*)r->env_marginal, (void*)r->env_conditional,
+                  (void*)r->accum, (void*)r->normal_depth, (void*)r->albedo, (void*)r->ping, (void*)r->pong, (void*)r->glow,
+                  (void*)r->glow_tmp})
     cudaFree(p);
   delete r;
 }
@@ -158,8 +189,19 @@ void accumulate(Renderer* r, const Camera& cam, const Settings& settings, int sp
   r->spp += spp;
 }
 
-void resolve(Renderer* r, const Settings& settings, void* device_rgba) {
-  resolve_kernel<<<grid_for(r), dim3(16, 16)>>>(*r, settings, (uchar4*)device_rgba);
+void resolve(Renderer* r, const Settings& st, void* device_rgba) {
+  float* color = nullptr;
+  float4* glow = nullptr;
+  if (st.view == VIEW_COLOR) {
+    mean_kernel<<<grid_for(r), dim3(16, 16)>>>(r->accum, r->ping, r->w, r->h, 1.0f / r->spp);
+    color = (float*)r->ping;
+    if (st.denoise) color = denoise(color, (float*)r->pong, (float*)r->normal_depth, (float*)r->albedo, r->w, r->h, r->spp, st);
+    if (st.bloom) {
+      bloom(color, (float*)r->glow, (float*)r->glow_tmp, r->w, r->h, st);
+      glow = r->glow;
+    }
+  }
+  resolve_kernel<<<grid_for(r), dim3(16, 16)>>>(*r, st, (float4*)color, glow, (uchar4*)device_rgba);
 }
 
 int accumulated_spp(const Renderer* r) { return r->spp; }
