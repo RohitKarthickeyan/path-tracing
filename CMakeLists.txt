@@ -8,8 +8,16 @@ set(CMAKE_CUDA_ARCHITECTURES 89)
 add_library(ptcore STATIC src/image_io.cpp src/render.cu src/scenes.cpp)
 target_include_directories(ptcore PUBLIC src PRIVATE third_party)
 
-add_executable(pt src/main.cpp)
-target_link_libraries(pt PRIVATE ptcore)
+include(FetchContent)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(glfw GIT_REPOSITORY https://github.com/glfw/glfw.git GIT_TAG 3.4 GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(glfw)
+find_package(CUDAToolkit REQUIRED)
+
+add_executable(pt src/main.cpp src/viewer.cpp)
+target_link_libraries(pt PRIVATE ptcore glfw opengl32 CUDA::cudart_static)
 
 enable_testing()
 file(GLOB TESTS CONFIGURE_DEPENDS tests/test_*.cpp)

@@ -7,8 +7,12 @@ struct Camera {
   float aperture, focus_dist;  // aperture 0 = pinhole
 };
 
+HD inline Vec3 camera_forward(const Camera& c) {
+  return {cosf(c.pitch) * sinf(c.yaw), sinf(c.pitch), -cosf(c.pitch) * cosf(c.yaw)};
+}
+
 HD inline Ray camera_ray(const Camera& c, float aspect, float u, float v, float lu, float lv) {
-  Vec3 fwd{cosf(c.pitch) * sinf(c.yaw), sinf(c.pitch), -cosf(c.pitch) * cosf(c.yaw)};
+  Vec3 fwd = camera_forward(c);
   Vec3 right = normalize(cross(fwd, Vec3{0, 1, 0}));
   Vec3 up = cross(right, fwd);
   float h = tanf(c.vfov * PI / 360);

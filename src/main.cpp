@@ -4,6 +4,7 @@
 #include "image_io.h"
 #include "render.h"
 #include "scenes.h"
+#include "viewer.h"
 
 int main(int argc, char** argv) {
   const char *scene_name = "sphere", *out = nullptr;
@@ -16,11 +17,15 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[i], "--out")) out = argv[i + 1];
   }
   Scene scene;
-  if (!out || spp < 1 || settings.exposure <= 0 || !make_scene(scene_name, scene)) {
-    std::fprintf(stderr, "usage: pt [--scene sphere|furnace|cornell|spheres] [--spp N] [--exposure X] --out <file.png>\n");
+  if (spp < 1 || settings.exposure <= 0 || !make_scene(scene_name, scene)) {
+    std::fprintf(stderr, "usage: pt [--scene sphere|furnace|cornell|spheres] [--spp N] [--exposure X] [--out <file.png>]\n");
     return 2;
   }
   const int w = 1280, h = 720;
+  if (!out) {
+    run_viewer(scene, settings, w, h);
+    return 0;
+  }
   if (!write_png(out, w, h, render_scene(scene, settings, w, h, spp).data())) {
     std::fprintf(stderr, "failed to write %s\n", out);
     return 1;

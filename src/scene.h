@@ -23,9 +23,12 @@ struct SceneView {
   Vec3 sky;
 };
 
+enum ViewMode : uint8_t { VIEW_COLOR, VIEW_NORMAL, VIEW_ALBEDO, VIEW_DEPTH };
+
 struct Settings {
   float exposure = 1;
   bool tonemap_aces = true;
+  ViewMode view = VIEW_COLOR;
 };
 
 struct Scene {
