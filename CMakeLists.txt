@@ -1,0 +1,26 @@
+cmake_minimum_required(VERSION 3.24)
+project(path_tracer LANGUAGES CXX CUDA)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CUDA_STANDARD 17)
+set(CMAKE_CUDA_ARCHITECTURES 89)
+
+add_library(ptcore STATIC src/image_io.cpp src/render.cu)
+target_include_directories(ptcore PUBLIC src PRIVATE third_party)
+
+add_executable(pt src/main.cpp)
+target_link_libraries(pt PRIVATE ptcore)
+
+enable_testing()
+file(GLOB TESTS CONFIGURE_DEPENDS tests/test_*.cpp)
+foreach(t ${TESTS})
+  get_filename_component(name ${t} NAME_WE)
+  add_executable(${name} ${t})
+  target_link_libraries(${name} PRIVATE ptcore)
+  add_test(NAME ${name} COMMAND ${name} WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+  if(name MATCHES "^test_gpu_")
+    set_tests_properties(${name} PROPERTIES LABELS gpu)
+  else()
+    set_tests_properties(${name} PROPERTIES LABELS fast)
+  endif()
+endforeach()
