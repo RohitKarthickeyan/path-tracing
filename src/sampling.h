@@ -37,6 +37,17 @@ HD inline uint8_t encode(float linear, float exposure, bool tonemap_aces) {
   return uint8_t(powf(fmaxf(x, 0.0f), 1 / GAMMA) * 255 + 0.5f);
 }
 
+HD inline Vec3 env_lookup(const float* env, int w, int h, Vec3 d, float rotation) {
+  float c = cosf(rotation), s = sinf(rotation);
+  Vec3 r{c * d.x + s * d.z, d.y, -s * d.x + c * d.z};
+  float u = 0.5f + atan2f(r.x, -r.z) / (2 * PI), v = acosf(fminf(fmaxf(r.y, -1.0f), 1.0f)) / PI;
+  int x = int(u * w), y = int(v * h);
+  x = x < w ? x : w - 1;
+  y = y < h ? y : h - 1;
+  const float* p = env + 3 * (y * w + x);
+  return {p[0], p[1], p[2]};
+}
+
 HD inline float schlick(float cos_i, float eta) {
   float r0 = (1 - eta) / (1 + eta);
   r0 *= r0;

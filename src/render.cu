@@ -10,6 +10,9 @@ struct Renderer {
   Sphere* spheres;
   Plane* planes;
   Material* mats;
+  Triangle* tris;
+  BvhNode* nodes;
+  float* env;
   SceneView view;
   float4* accum;
   float4* normal_depth;
@@ -26,7 +29,11 @@ __device__ void add(float4& a, Vec3 v, float w = 0) {
   a.w += w;
 }
 
-__global__ void path_kernel(Renderer r, Camera cam, uint32_t frame) {
+__device__ Vec3 sky_radiance(const SceneView& s, const Settings& st, Vec3 d) {
+  return s.env ? st.env_intensity * env_lookup(s.env, s.env_w, s.env_h, d, st.env_rotation) : s.sky;
+}
+
+__global__ void path_kernel(Renderer r, Camera cam, Settings st, uint32_t frame) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
   if (x >= r.w || y >= r.h) return;
@@ -36,12 +43,12 @@ __global__ void path_kernel(Renderer r, Camera cam, uint32_t frame) {
   float u = (x + rng.next_float()) / r.w, v = 1 - (y + rng.next_float()) / r.h;
   Ray ray = camera_ray(cam, float(r.w) / r.h, u, v, rng.next_float(), rng.next_float());
   Vec3 color{0, 0, 0}, throughput{1, 1, 1};
-  Vec3 aov_n{0, 0, 0}, aov_a = saturate(s.sky);
+  Vec3 aov_n{0, 0, 0}, aov_a = saturate(sky_radiance(s, st, ray.d));
   float aov_d = MISS_DEPTH;
   for (int b = 0; b < MAX_BOUNCES; b++) {
     Hit hit;
     if (!hit_scene(s, ray, hit)) {
-      color = color + throughput * s.sky;
+      color = color + throughput * sky_radiance(s, st, ray.d);
       break;
     }
     Material m = s.mats[hit.mat];
@@ -66,6 +73,11 @@ __global__ void path_kernel(Renderer r, Camera cam, uint32_t frame) {
         dir = reflect(ray.d, hit.n);
     }
     throughput = throughput * m.albedo;
+    if (b >= 3) {
+      float p = fminf(fmaxf(fmaxf(throughput.x, fmaxf(throughput.y, throughput.z)), 0.05f), 0.95f);
+      if (rng.next_float() > p) break;
+      throughput = throughput / p;
+    }
     ray = {hit.p + hit.n * (dot(dir, hit.n) > 0 ? T_MIN : -T_MIN), dir};
   }
   add(r.normal_depth[i], aov_n, aov_d);
@@ -111,7 +123,11 @@ Renderer* create_renderer(const Scene& scene, int w, int h) {
   r->spheres = upload(scene.spheres);
   r->planes = upload(scene.planes);
   r->mats = upload(scene.mats);
-  r->view = {r->spheres, int(scene.spheres.size()), r->planes, int(scene.planes.size()), r->mats, scene.sky};
+  r->tris = upload(scene.tris);
+  r->nodes = upload(scene.bvh);
+  r->env = scene.env.empty() ? nullptr : upload(scene.env);
+  r->view = {r->spheres, int(scene.spheres.size()), r->planes, int(scene.planes.size()), r->mats, scene.sky,
+             r->tris, int(scene.tris.size()), r->nodes, r->env, scene.env_w, scene.env_h};
   r->w = w;
   r->h = h;
   size_t bytes = size_t(w) * h * sizeof(float4);
@@ -123,7 +139,9 @@ Renderer* create_renderer(const Scene& scene, int w, int h) {
 }
 
 void destroy_renderer(Renderer* r) {
-  for (void* p : {(void*)r->spheres, (void*)r->planes, (void*)r->mats, (void*)r->accum, (void*)r->normal_depth, (void*)r->albedo}) cudaFree(p);
+  for (void* p : {(void*)r->spheres, (void*)r->planes, (void*)r->mats, (void*)r->tris, (void*)r->nodes, (void*)r->env,
+                  (void*)r->accum, (void*)r->normal_depth, (void*)r->albedo})
+    cudaFree(p);
   delete r;
 }
 
@@ -135,8 +153,8 @@ void reset_accumulation(Renderer* r) {
   r->spp = 0;
 }
 
-void accumulate(Renderer* r, const Camera& cam, int spp) {
-  for (int f = 0; f < spp; f++) path_kernel<<<grid_for(r), dim3(16, 16)>>>(*r, cam, r->spp + f);
+void accumulate(Renderer* r, const Camera& cam, const Settings& settings, int spp) {
+  for (int f = 0; f < spp; f++) path_kernel<<<grid_for(r), dim3(16, 16)>>>(*r, cam, settings, r->spp + f);
   r->spp += spp;
 }
 
@@ -148,7 +166,7 @@ int accumulated_spp(const Renderer* r) { return r->spp; }
 
 std::vector<uint8_t> render_scene(const Scene& scene, const Settings& settings, int w, int h, int spp) {
   Renderer* r = create_renderer(scene, w, h);
-  accumulate(r, scene.cam, spp);
+  accumulate(r, scene.cam, settings, spp);
   uchar4* out = nullptr;
   cudaMalloc(&out, size_t(w) * h * sizeof(uchar4));
   resolve(r, settings, out);
@@ -161,7 +179,7 @@ std::vector<uint8_t> render_scene(const Scene& scene, const Settings& settings, 
 
 std::vector<float> render_linear(const Scene& scene, int w, int h, int spp) {
   Renderer* r = create_renderer(scene, w, h);
-  accumulate(r, scene.cam, spp);
+  accumulate(r, scene.cam, Settings{}, spp);
   std::vector<float4> sums(size_t(w) * h);
   cudaMemcpy(sums.data(), r->accum, sums.size() * sizeof(float4), cudaMemcpyDeviceToHost);
   destroy_renderer(r);

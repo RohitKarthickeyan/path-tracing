@@ -7,7 +7,7 @@ struct Renderer;
 Renderer* create_renderer(const Scene& scene, int w, int h);
 void destroy_renderer(Renderer* r);
 void reset_accumulation(Renderer* r);
-void accumulate(Renderer* r, const Camera& cam, int spp);
+void accumulate(Renderer* r, const Camera& cam, const Settings& settings, int spp);
 void resolve(Renderer* r, const Settings& settings, void* device_rgba);
 int accumulated_spp(const Renderer* r);
 

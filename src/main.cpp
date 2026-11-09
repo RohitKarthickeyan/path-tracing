@@ -18,7 +18,7 @@ int main(int argc, char** argv) {
   }
   Scene scene;
   if (spp < 1 || settings.exposure <= 0 || !make_scene(scene_name, scene)) {
-    std::fprintf(stderr, "usage: pt [--scene sphere|furnace|cornell|spheres] [--spp N] [--exposure X] [--out <file.png>]\n");
+    std::fprintf(stderr, "usage: pt [--scene sphere|furnace|cornell|spheres|bunny] [--spp N] [--exposure X] [--out <file.png>]\n");
     return 2;
   }
   const int w = 1280, h = 720;

@@ -1,4 +1,38 @@
+#include "bvh.h"
+#include "image_io.h"
+#include "obj.h"
 #include "scenes.h"
+
+static void place(std::vector<Triangle> tris, Vec3 base, float height, std::vector<Triangle>& out) {
+  Aabb b{tris[0].v0, tris[0].v0};
+  for (const Triangle& t : tris) b = {vmin(vmin(b.lo, t.v0), vmin(t.v1, t.v2)), vmax(vmax(b.hi, t.v0), vmax(t.v1, t.v2))};
+  float s = height / (b.hi.y - b.lo.y);
+  Vec3 c{(b.lo.x + b.hi.x) / 2, b.lo.y, (b.lo.z + b.hi.z) / 2};
+  for (Triangle t : tris) {
+    t.v0 = (t.v0 - c) * s + base;
+    t.v1 = (t.v1 - c) * s + base;
+    t.v2 = (t.v2 - c) * s + base;
+    out.push_back(t);
+  }
+}
+
+static bool bunnies(Scene& out) {
+  out.mats = {
+      {DIFFUSE, {0.5f, 0.5f, 0.5f}},
+      {GLASS, {1, 1, 1}, {}, 0, 1.5f},
+      {METAL, {1.0f, 0.71f, 0.29f}, {}, 0.05f},
+  };
+  std::vector<Triangle> bunny;
+  if (!load_obj("assets/bunny.obj", 1, bunny)) return false;
+  place(bunny, {-0.65f, 0, 0}, 1, out.tris);
+  for (Triangle& t : bunny) t.mat = 2;
+  place(bunny, {0.65f, 0, 0}, 1, out.tris);
+  build_bvh(out.tris, out.bvh);
+  out.planes = {{{0, 0, 0}, {0, 1, 0}, 0}};
+  if (!load_hdr("assets/sky.hdr", out.env_w, out.env_h, out.env)) return false;
+  out.cam = {{0, 0.9f, 3.2f}, 0, -0.12f, 35};
+  return true;
+}
 
 static Camera look_at(Vec3 pos, Vec3 target, float vfov, float aperture) {
   Vec3 d = target - pos;
@@ -40,6 +74,7 @@ bool make_scene(const std::string& name, Scene& out) {
     random_spheres(out);
     return true;
   }
+  if (name == "bunny") return bunnies(out);
   if (name == "furnace") {
     out.mats = {{DIFFUSE, {0.8f, 0.8f, 0.8f}, {}}};
     out.spheres = {{{0, 0, 0}, 1, 0}};

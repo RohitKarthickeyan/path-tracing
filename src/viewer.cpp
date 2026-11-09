@@ -68,7 +68,7 @@ void run_viewer(const Scene& scene, Settings settings, int w, int h) {
     for (int v = 0; v < 4; v++)
       if (glfwGetKey(win, view_keys[v]) == GLFW_PRESS) settings.view = ViewMode(v);
 
-    accumulate(r, cam, 1);
+    accumulate(r, cam, settings, 1);
     void* px;
     size_t size;
     cudaGraphicsMapResources(1, &res);

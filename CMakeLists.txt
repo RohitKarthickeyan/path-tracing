@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_ARCHITECTURES 89)
 
-add_library(ptcore STATIC src/image_io.cpp src/render.cu src/scenes.cpp)
+add_library(ptcore STATIC src/image_io.cpp src/render.cu src/scenes.cpp src/obj.cpp src/bvh.cpp)
 target_include_directories(ptcore PUBLIC src PRIVATE third_party)
 
 include(FetchContent)
