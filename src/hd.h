@@ -8,8 +8,11 @@
 #define HD
 #endif
 
+constexpr float PI = 3.14159265f;
+
 struct Vec3 { float x, y, z; };
 
+HD inline Vec3 operator-(Vec3 a) { return {-a.x, -a.y, -a.z}; }
 HD inline Vec3 operator+(Vec3 a, Vec3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
 HD inline Vec3 operator-(Vec3 a, Vec3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
 HD inline Vec3 operator*(Vec3 a, Vec3 b) { return {a.x * b.x, a.y * b.y, a.z * b.z}; }
