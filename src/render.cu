@@ -28,6 +28,7 @@ __global__ void path_kernel(float4* accum, SceneView s, Camera cam, int w, int h
     throughput = throughput * m.albedo;
     ray = {hit.p + hit.n * T_MIN, cosine_direction(hit.n, rng)};
   }
+  if (!isfinite(color.x) || !isfinite(color.y) || !isfinite(color.z)) return;
   accum[i].x += color.x;
   accum[i].y += color.y;
   accum[i].z += color.z;
@@ -50,26 +51,42 @@ template <class T> static T* upload(const std::vector<T>& v) {
   return d;
 }
 
-std::vector<uint8_t> render_scene(const Scene& scene, int w, int h, int spp) {
+static float4* accumulate(const Scene& scene, int w, int h, int spp) {
   Sphere* spheres = upload(scene.spheres);
   Plane* planes = upload(scene.planes);
   Material* mats = upload(scene.mats);
   SceneView s{spheres, int(scene.spheres.size()), planes, int(scene.planes.size()), mats, scene.sky};
-  size_t n = size_t(w) * h;
   float4* accum = nullptr;
-  uchar4* out = nullptr;
-  cudaMalloc(&accum, n * sizeof(float4));
-  cudaMemset(accum, 0, n * sizeof(float4));
-  cudaMalloc(&out, n * sizeof(uchar4));
+  cudaMalloc(&accum, size_t(w) * h * sizeof(float4));
+  cudaMemset(accum, 0, size_t(w) * h * sizeof(float4));
   dim3 block(16, 16), grid((w + 15) / 16, (h + 15) / 16);
   for (int f = 0; f < spp; f++) path_kernel<<<grid, block>>>(accum, s, scene.cam, w, h, f);
-  resolve_kernel<<<grid, block>>>(accum, out, w, h, spp);
-  std::vector<uint8_t> px(n * 4);
-  cudaMemcpy(px.data(), out, px.size(), cudaMemcpyDeviceToHost);
   cudaFree(spheres);
   cudaFree(planes);
   cudaFree(mats);
+  return accum;
+}
+
+std::vector<uint8_t> render_scene(const Scene& scene, int w, int h, int spp) {
+  float4* accum = accumulate(scene, w, h, spp);
+  uchar4* out = nullptr;
+  cudaMalloc(&out, size_t(w) * h * sizeof(uchar4));
+  dim3 block(16, 16), grid((w + 15) / 16, (h + 15) / 16);
+  resolve_kernel<<<grid, block>>>(accum, out, w, h, spp);
+  std::vector<uint8_t> px(size_t(w) * h * 4);
+  cudaMemcpy(px.data(), out, px.size(), cudaMemcpyDeviceToHost);
   cudaFree(accum);
   cudaFree(out);
   return px;
+}
+
+std::vector<float> render_linear(const Scene& scene, int w, int h, int spp) {
+  float4* accum = accumulate(scene, w, h, spp);
+  std::vector<float4> sums(size_t(w) * h);
+  cudaMemcpy(sums.data(), accum, sums.size() * sizeof(float4), cudaMemcpyDeviceToHost);
+  cudaFree(accum);
+  std::vector<float> rgb;
+  rgb.reserve(sums.size() * 3);
+  for (float4 a : sums) rgb.insert(rgb.end(), {a.x / spp, a.y / spp, a.z / spp});
+  return rgb;
 }
