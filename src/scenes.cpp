@@ -18,7 +18,7 @@ static void place(std::vector<Triangle> tris, Vec3 base, float height, std::vect
 
 static bool bunnies(Scene& out) {
   out.mats = {
-      {DIFFUSE, {0.5f, 0.5f, 0.5f}},
+      {DIFFUSE, {0.25f, 0.25f, 0.25f}, {}, 0, 0, CHECKER, {0.8f, 0.8f, 0.8f}, 2},
       {GLASS, {1, 1, 1}, {}, 0, 1.5f},
       {METAL, {1.0f, 0.71f, 0.29f}, {}, 0.05f},
   };
@@ -43,7 +43,7 @@ static Camera look_at(Vec3 pos, Vec3 target, float vfov, float aperture) {
 
 static void random_spheres(Scene& out) {
   out.mats = {
-      {DIFFUSE, {0.5f, 0.5f, 0.5f}},
+      {DIFFUSE, {0.2f, 0.3f, 0.1f}, {}, 0, 0, CHECKER, {0.9f, 0.9f, 0.9f}, 1},
       {GLASS, {1, 1, 1}, {}, 0, 1.5f},
       {DIFFUSE, {0.4f, 0.2f, 0.1f}},
       {METAL, {0.7f, 0.6f, 0.5f}, {}, 0},

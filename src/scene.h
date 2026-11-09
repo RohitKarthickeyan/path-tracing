@@ -3,12 +3,22 @@
 #include "camera.h"
 
 enum MatType : uint8_t { DIFFUSE, METAL, GLASS, EMISSIVE };
+enum Pattern : uint8_t { SOLID, CHECKER };  // CHECKER: squares in the xz plane
 
 struct Material {
   MatType type;
   Vec3 albedo, emission;
   float fuzz, ior;
+  Pattern pattern;
+  Vec3 albedo2;
+  float checker_scale;  // squares per unit
 };
+
+HD inline Vec3 material_albedo(const Material& m, Vec3 p) {
+  if (m.pattern == SOLID) return m.albedo;
+  int k = int(floorf(p.x * m.checker_scale)) + int(floorf(p.z * m.checker_scale));
+  return k & 1 ? m.albedo2 : m.albedo;
+}
 
 struct Sphere { Vec3 c; float r; int mat; };
 struct Plane { Vec3 p, n; int mat; };
@@ -38,10 +48,11 @@ struct Settings {
   float exposure = 1;
   bool tonemap_aces = true;
   ViewMode view = VIEW_COLOR;
+  int spp_per_frame = 1, max_bounces = 8;
   float env_intensity = 1, env_rotation = 0;  // rotation: radians about +Y
   bool denoise = true;
   int denoise_iters = 5;
-  float sigma_n = 128, sigma_a = 0.1f, sigma_z = 0.1f, sigma_c = 1;
+  float sigma_n = 128, sigma_a = 0.1f, sigma_z = 0.1f, sigma_c = 4;
   bool bloom = true;
   float bloom_threshold = 1, bloom_knee = 0.5f, bloom_strength = 0.05f;
   int bloom_radius = 16;  // pixels

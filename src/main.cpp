@@ -14,16 +14,18 @@ int main(int argc, char** argv) {
     if (!std::strcmp(argv[i], "--scene")) scene_name = argv[i + 1];
     else if (!std::strcmp(argv[i], "--spp")) spp = std::atoi(argv[i + 1]);
     else if (!std::strcmp(argv[i], "--exposure")) settings.exposure = float(std::atof(argv[i + 1]));
+    else if (!std::strcmp(argv[i], "--denoise")) settings.denoise = std::atoi(argv[i + 1]) != 0;
+    else if (!std::strcmp(argv[i], "--bloom")) settings.bloom = std::atoi(argv[i + 1]) != 0;
     else if (!std::strcmp(argv[i], "--out")) out = argv[i + 1];
   }
   Scene scene;
   if (spp < 1 || settings.exposure <= 0 || !make_scene(scene_name, scene)) {
-    std::fprintf(stderr, "usage: pt [--scene sphere|furnace|cornell|spheres|bunny] [--spp N] [--exposure X] [--out <file.png>]\n");
+    std::fprintf(stderr, "usage: pt [--scene sphere|furnace|cornell|spheres|bunny] [--spp N] [--exposure X] [--denoise 0|1] [--bloom 0|1] [--out <file.png>]\n");
     return 2;
   }
   const int w = 1280, h = 720;
   if (!out) {
-    run_viewer(scene, settings, w, h);
+    run_viewer(scene_name, settings, 1600, 900);
     return 0;
   }
   if (!write_png(out, w, h, render_scene(scene, settings, w, h, spp).data())) {

@@ -54,11 +54,22 @@ HD inline int env_index(float u, float v, int w, int h) {
   return (y < h ? y : h - 1) * w + (x < w ? x : w - 1);
 }
 
+HD inline Vec3 env_texel(const float* env, int w, int x, int y) {
+  x = (x % w + w) % w;
+  const float* p = env + 3 * (y * w + x);
+  return {p[0], p[1], p[2]};
+}
+
+// bilinear; wraps in u, clamps in v
 HD inline Vec3 env_lookup(const float* env, int w, int h, Vec3 d, float rotation) {
   float u, v;
   env_uv(d, rotation, u, v);
-  const float* p = env + 3 * env_index(u, v, w, h);
-  return {p[0], p[1], p[2]};
+  float fx = u * w - 0.5f, fy = fminf(fmaxf(v * h - 0.5f, 0.0f), h - 1.0f);
+  int x0 = int(floorf(fx)), y0 = int(fy), y1 = y0 + 1 < h ? y0 + 1 : y0;
+  float tx = fx - x0, ty = fy - y0;
+  Vec3 top = env_texel(env, w, x0, y0) * (1 - tx) + env_texel(env, w, x0 + 1, y0) * tx;
+  Vec3 bottom = env_texel(env, w, x0, y1) * (1 - tx) + env_texel(env, w, x0 + 1, y1) * tx;
+  return top * (1 - ty) + bottom * ty;
 }
 
 // CDFs over env pixels weighted by luminance * sin(theta); marginal over rows, conditional per row

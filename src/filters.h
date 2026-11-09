@@ -11,10 +11,9 @@ HD inline float atrous_weight(const GSample& p, const GSample& q, const Settings
   return wn * wa * wz;
 }
 
-// noise in r shrinks as 1/sqrt(spp), so r^2 * spp keeps noise weight constant while real edges sharpen
-HD inline float color_weight(float lp, float lq, int spp, float sigma_c) {
-  float r = fabsf(lp - lq) / (lp + lq + 1e-3f);
-  return expf(-r * r * spp / (sigma_c * sigma_c));
+// std: noise std of the center pixel's mean luminance (SVGF-style edge stop)
+HD inline float color_weight(float lp, float lq, float std, float sigma_c) {
+  return expf(-fabsf(lp - lq) / (sigma_c * std + 1e-4f));
 }
 
 // 3x3 Karis average (1 / (1 + luma) weights) so lone fireflies don't bloom, then soft-knee threshold

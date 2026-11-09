@@ -13,13 +13,13 @@ __device__ GSample gsample(const float4* nd, const float4* alb, int i, float inv
 }
 
 __global__ void atrous_kernel(const float4* in, float4* out, const float4* nd, const float4* alb, int w, int h, float inv,
-                              int spp, int step, Settings st) {
+                              int step, Settings st) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
   if (x >= w || y >= h) return;
   int i = y * w + x;
   GSample p = gsample(nd, alb, i, inv);
-  float lp = luminance(rgb(in[i]));
+  float lp = luminance(rgb(in[i])), std = in[i].w;
   if (p.n.x == 0 && p.n.y == 0 && p.n.z == 0) {
     out[i] = in[i];
     return;
@@ -32,13 +32,13 @@ __global__ void atrous_kernel(const float4* in, float4* out, const float4* nd, c
       if (qx < 0 || qy < 0 || qx >= w || qy >= h) continue;
       int q = qy * w + qx;
       float wt = H[dx + 2] * H[dy + 2] * atrous_weight(p, gsample(nd, alb, q, inv), st) *
-                 color_weight(lp, luminance(rgb(in[q])), spp, st.sigma_c);
+                 color_weight(lp, luminance(rgb(in[q])), std, st.sigma_c);
       sum = sum + wt * rgb(in[q]);
       wsum += wt;
     }
   }
   Vec3 c = sum / wsum;
-  out[i] = make_float4(c.x, c.y, c.z, 0);
+  out[i] = make_float4(c.x, c.y, c.z, std);  // ponytail: std not re-filtered per pass (SVGF does)
 }
 
 __global__ void bright_kernel(const float4* in, float4* out, int w, int h, float threshold, float knee) {
@@ -76,7 +76,7 @@ static dim3 grid(int w, int h) { return dim3((w + 15) / 16, (h + 15) / 16); }
 float* denoise(float* a, float* b, const float* normal_depth, const float* albedo, int w, int h, int spp, const Settings& st) {
   for (int i = 0; i < st.denoise_iters; i++) {
     atrous_kernel<<<grid(w, h), dim3(16, 16)>>>((float4*)a, (float4*)b, (const float4*)normal_depth, (const float4*)albedo, w, h,
-                                                1.0f / spp, spp, 1 << i, st);
+                                                1.0f / spp, 1 << i, st);
     float* t = a;
     a = b;
     b = t;

@@ -4,7 +4,6 @@
 #include "render.h"
 #include "sampling.h"
 
-constexpr int MAX_BOUNCES = 8;
 constexpr float MISS_DEPTH = 1e4f;
 
 struct Renderer {
@@ -50,7 +49,7 @@ __global__ void path_kernel(Renderer r, Camera cam, Settings st, uint32_t frame)
   float aov_d = MISS_DEPTH;
   EnvDist ed{s.env_marginal, s.env_conditional, s.env_w, s.env_h};
   float bsdf_pdf = 0;  // cosine pdf of the last diffuse bounce; 0 after camera or specular
-  for (int b = 0; b < MAX_BOUNCES; b++) {
+  for (int b = 0; b < st.max_bounces; b++) {
     Hit hit;
     if (!hit_scene(s, ray, hit)) {
       float mis = ed.marginal && bsdf_pdf > 0 ? bsdf_pdf / (bsdf_pdf + env_pdf(ed, ray.d, st.env_rotation)) : 1;
@@ -58,10 +57,11 @@ __global__ void path_kernel(Renderer r, Camera cam, Settings st, uint32_t frame)
       break;
     }
     Material m = s.mats[hit.mat];
+    Vec3 albedo = material_albedo(m, hit.p);
     if (b == 0) {
       aov_n = hit.n;
       aov_d = hit.t;
-      aov_a = m.type == EMISSIVE ? saturate(m.emission) : m.albedo;
+      aov_a = m.type == EMISSIVE ? saturate(m.emission) : albedo;
     }
     if (m.type == EMISSIVE) {
       color = color + throughput * m.emission;
@@ -76,7 +76,7 @@ __global__ void path_kernel(Renderer r, Camera cam, Settings st, uint32_t frame)
         float c = dot(l, hit.n);
         Hit blocker;
         if (c > 0 && light_pdf > 0 && !hit_scene(s, {hit.p + hit.n * T_MIN, l}, blocker))
-          color = color + throughput * m.albedo * sky_radiance(s, st, l) * (c / PI / (light_pdf + c / PI));
+          color = color + throughput * albedo * sky_radiance(s, st, l) * (c / PI / (light_pdf + c / PI));
       }
       dir = cosine_direction(hit.n, rng);
       bsdf_pdf = dot(dir, hit.n) / PI;
@@ -88,7 +88,7 @@ __global__ void path_kernel(Renderer r, Camera cam, Settings st, uint32_t frame)
       if (!refract(ray.d, hit.n, eta, dir) || rng.next_float() < schlick(-dot(ray.d, hit.n), eta))
         dir = reflect(ray.d, hit.n);
     }
-    throughput = throughput * m.albedo;
+    throughput = throughput * albedo;
     if (b >= 3) {
       float p = fminf(fmaxf(fmaxf(throughput.x, fmaxf(throughput.y, throughput.z)), 0.05f), 0.95f);
       if (rng.next_float() > p) break;
@@ -98,17 +98,22 @@ __global__ void path_kernel(Renderer r, Camera cam, Settings st, uint32_t frame)
   }
   add(r.normal_depth[i], aov_n, aov_d);
   add(r.albedo[i], aov_a);
-  if (isfinite(color.x) && isfinite(color.y) && isfinite(color.z)) add(r.accum[i], color);
+  float l = luminance(color);
+  if (isfinite(color.x) && isfinite(color.y) && isfinite(color.z)) add(r.accum[i], color, l * l);
 }
 
 __device__ uint8_t unit_byte(float x) { return uint8_t(fminf(fmaxf(x, 0.0f), 1.0f) * 255 + 0.5f); }
 
-__global__ void mean_kernel(const float4* accum, float4* out, int w, int h, float inv) {
+// .w = std of the mean's luminance; below 4 spp the estimate is useless, so huge std disables the color term
+__global__ void mean_kernel(const float4* accum, float4* out, int w, int h, int spp) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
   if (x >= w || y >= h) return;
+  float inv = 1.0f / spp;
   float4 a = accum[y * w + x];
-  out[y * w + x] = make_float4(a.x * inv, a.y * inv, a.z * inv, 0);
+  float l = luminance({a.x * inv, a.y * inv, a.z * inv});
+  float std = spp < 4 ? 1e20f : sqrtf(fmaxf(a.w * inv - l * l, 0.0f) * inv);
+  out[y * w + x] = make_float4(a.x * inv, a.y * inv, a.z * inv, std);
 }
 
 __global__ void resolve_kernel(Renderer r, Settings st, const float4* color, const float4* glow, uchar4* out) {
@@ -193,7 +198,7 @@ void resolve(Renderer* r, const Settings& st, void* device_rgba) {
   float* color = nullptr;
   float4* glow = nullptr;
   if (st.view == VIEW_COLOR) {
-    mean_kernel<<<grid_for(r), dim3(16, 16)>>>(r->accum, r->ping, r->w, r->h, 1.0f / r->spp);
+    mean_kernel<<<grid_for(r), dim3(16, 16)>>>(r->accum, r->ping, r->w, r->h, r->spp);
     color = (float*)r->ping;
     if (st.denoise) color = denoise(color, (float*)r->pong, (float*)r->normal_depth, (float*)r->albedo, r->w, r->h, r->spp, st);
     if (st.bloom) {
