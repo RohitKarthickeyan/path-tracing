@@ -12,7 +12,8 @@ __global__ void path_kernel(float4* accum, SceneView s, Camera cam, int w, int h
   if (x >= w || y >= h) return;
   int i = y * w + x;
   Rng rng = rng_seed(i, frame);
-  Ray ray = camera_ray(cam, float(w) / h, (x + rng.next_float()) / w, 1 - (y + rng.next_float()) / h);
+  float u = (x + rng.next_float()) / w, v = 1 - (y + rng.next_float()) / h;
+  Ray ray = camera_ray(cam, float(w) / h, u, v, rng.next_float(), rng.next_float());
   Vec3 color{0, 0, 0}, throughput{1, 1, 1};
   for (int b = 0; b < MAX_BOUNCES; b++) {
     Hit hit;
@@ -25,8 +26,19 @@ __global__ void path_kernel(float4* accum, SceneView s, Camera cam, int w, int h
       color = color + throughput * m.emission;
       break;
     }
+    Vec3 dir;
+    if (m.type == DIFFUSE) {
+      dir = cosine_direction(hit.n, rng);
+    } else if (m.type == METAL) {
+      dir = normalize(reflect(ray.d, hit.n) + m.fuzz * random_unit_vector(rng));
+      if (dot(dir, hit.n) <= 0) break;
+    } else {
+      float eta = hit.front ? 1 / m.ior : m.ior;
+      if (!refract(ray.d, hit.n, eta, dir) || rng.next_float() < schlick(-dot(ray.d, hit.n), eta))
+        dir = reflect(ray.d, hit.n);
+    }
     throughput = throughput * m.albedo;
-    ray = {hit.p + hit.n * T_MIN, cosine_direction(hit.n, rng)};
+    ray = {hit.p + hit.n * (dot(dir, hit.n) > 0 ? T_MIN : -T_MIN), dir};
   }
   if (!isfinite(color.x) || !isfinite(color.y) || !isfinite(color.z)) return;
   accum[i].x += color.x;

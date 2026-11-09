@@ -2,11 +2,12 @@
 #include <vector>
 #include "camera.h"
 
-enum MatType : uint8_t { DIFFUSE, EMISSIVE };
+enum MatType : uint8_t { DIFFUSE, METAL, GLASS, EMISSIVE };
 
 struct Material {
   MatType type;
   Vec3 albedo, emission;
+  float fuzz, ior;
 };
 
 struct Sphere { Vec3 c; float r; int mat; };
